@@ -9,41 +9,65 @@ from sklearn.metrics import mean_squared_log_error
 from autogluon.core.metrics import make_scorer
 
 
-num_devices = torch.cuda.device_count()
-print(f"Available Device Counts: {num_devices}")
+class AutoGluonRegression(TabularDataset):
+    def __init__(self,
+                 train_path='../dataset/DaeguTrafficAccident/train_1201.csv',
+                 test_path='../dataset/DaeguTrafficAccident/test_1201.csv',
+                 ):
+        self.train = pd.read_csv(train_path)
+        self.test = pd.read_csv(test_path)
 
-train = pd.read_csv('../dataset/DaeguTrafficAccident/train_1201.csv')
-test = pd.read_csv('../dataset/DaeguTrafficAccident/test_1201.csv')
+    def get_dataset(self, data):
+        df = TabularDataset(data)
+        df['사고일시'] = pd.to_datetime(df['사고일시'])
+        return df
 
-train_data = TabularDataset(train)
-test_data = TabularDataset(test)
-train_data.head()
+    def make_rmsle(self):
+        scorer = make_scorer(name='RMSLE',
+                             score_func=mean_squared_log_error,
+                             optimum=1,
+                             greater_is_better=True)
+        return scorer
 
-drops = list(set(train.columns) - set(test.columns))
-drops.remove('ECLO')
+    def preprocess(self, train, test):
+        drops = list(set(train.columns) - set(test.columns))
+        drops.remove('ECLO')
 
-train_data.drop(drops, axis=1, inplace=True)
-train_data['사고일시'] = pd.to_datetime(train_data['사고일시'])
-test_data['사고일시'] = pd.to_datetime(test_data['사고일시'])
+        train_data = self.get_dataset(train)
+        test_data = self.get_dataset(test)
 
-# cat_cols = [x for x in train.columns if x.dtype]
+        train_data.drop(drops, axis=1)
 
-label = "ECLO"
+        return train_data, test_data
 
-rmsle = make_scorer(name='RMSLE',
-                    score_func=mean_squared_log_error,
-                    optimum=1,
-                    greater_is_better=False)
 
-predictor = TabularPredictor(label=label, eval_metric=rmsle, problem_type='regression').fit(train_data,
+
+    def predict(self):
+
+        train_data, test_data = self.preprocess(self.train, self.test)
+
+        rmsle = self.make_rmsle()
+
+        predictor = TabularPredictor(label='ECLO', eval_metric=rmsle, problem_type='regression').fit(train_data,
                                                                                             num_gpus=num_devices,
                                                                                             num_cpus=os.cpu_count()
-                                                                                            )
-print(predictor.leaderboard(train_data, extra_metrics=[rmsle], silent=True))
+                                                                                                    )
+        print(predictor.leaderboard(train_data, extra_metrics=[rmsle], silent=True))
 
-pred = predictor.predict(test_data)
+        preds = predictor.predict(test_data)
+        return preds
 
-submission = pd.read_csv('../dataset/DaeguTrafficAccident/sample_submission.csv')
-submission[label] = pred
 
-submission.to_csv('../dataset/DaeguTrafficAccident/submission_autogluon_1201.csv', index=False)
+def main():
+    autogluon_reg = AutoGluonRegression()
+    preds = autogluon_reg.predict()
+
+    submission = pd.read_csv('../dataset/DaeguTrafficAccident/sample_submission.csv')
+    submission['ECLO'] = preds
+
+if __name__ == '__main__':
+
+    num_devices = torch.cuda.device_count()
+    print(f"Available Device Counts: {num_devices}")
+
+    main()
